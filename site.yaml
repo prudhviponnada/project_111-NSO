@@ -1,0 +1,258 @@
+---
+- hosts: all 
+  gather_facts: yes
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: updating all hosts 
+      apt:
+        update_cache: yes
+    - name : sudo wait
+      become: yes
+      shell: while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1; do sleep 5; done;
+
+- hosts: dev 
+  become: true
+  become_method: sudo
+  gather_facts: true
+  tasks:
+    - name: update all dev 
+      apt:
+        update_cache: true
+
+    - name: Installing nginx
+      apt:
+        name: nginx
+        state: latest
+        update_cache: true
+
+    - name: pip install
+      apt:
+        name: python3-pip
+        state: latest
+        update_cache: true
+
+    - name: Installing flask app
+      pip:
+        executable: pip3
+        name: flask
+        state: latest
+
+    - name: apt update
+      apt:
+        update_cache: true
+
+    - name: Installing flask service deployment
+      pip:
+        executable: pip3
+        name: gunicorn
+        state: latest
+
+    - name: apt update
+      apt:
+        update_cache: true
+
+    - name: copy flask app 
+      copy:
+        src: /$PWD/service.py
+        dest: /home/ubuntu/app.py
+        owner: ubuntu
+        mode: '0644'
+
+    - name: deploying Flask application 
+      shell: gunicorn -w 2 -D -b 0.0.0.0:5000 app:app
+
+    - name: install snmpd 
+      apt:
+        name: snmpd
+        state: latest
+        update_cache: true
+
+    - name: configure snmpd
+      template:
+             src: snmpd.conf
+             dest: /etc/snmp/snmpd.conf
+
+    - name: restarting snmpd
+      service:
+            name: snmpd
+            state: restarted
+
+    - name: apt update
+      apt:
+        update_cache: true
+  
+- hosts: all
+  gather_facts: true
+    
+- hosts: main_proxy 
+  become: true
+  tasks: 
+    - name: update HAproxy
+      apt:
+        update_cache: yes
+
+    - name: Installing HAPROXY
+      apt:
+        name: haproxy
+        state: present
+        update_cache: true
+   
+    - name: Installing keepalived
+      apt:
+        name: keepalived
+        state: present
+        update_cache: true
+    
+    - name: Configure haproxy
+      template:
+             src: /$PWD/haproxy.cfg.j2
+             dest: /etc/haproxy/haproxy.cfg
+
+    - name: Restart haproxy
+      service:
+        name: haproxy
+        state: restarted
+
+    - name: apt update
+      apt:
+        update_cache: true
+
+    - name: Installing Nginx
+      apt:
+        name: nginx
+        update_cache: yes
+        state: latest
+
+    - name: Installing snmp, snmp-mibs-downloader
+      apt: 
+        update_cache: yes
+        name: [ 'snmp', 'snmp-mibs-downloader' ] 
+        state: latest
+
+    - name: configure nginx udp port
+      template:
+             src: nginxport.conf
+             dest: /etc/nginx/sites-available/default
+
+    - name: configure udp for loadbalancing
+      template:
+             src: nginxudp.conf
+             dest: /etc/nginx/nginx.conf
+
+    - name: Restart Nginx
+      service:
+            name: nginx
+            state: restarted
+    - name: apt update
+      apt:
+        update_cache: true
+
+    - name: Restart keepalived
+      service:
+            name: keepalived
+            state: restarted
+    - name: apt update
+      apt:
+        update_cache: true
+
+- hosts: primary_proxy
+  become: yes
+  vars:
+    host_name: "{{ inventory_hostname }}"
+    node_state: MASTER
+    node_priority: 101
+    virtual_ip: "{{ lookup('file', './addr_vip') }}"
+  tasks:
+    - name: configure keepalived
+      template:
+        src: keepalived.conf.j2
+        dest: /etc/keepalived/keepalived.conf
+
+
+- hosts: backup_proxy
+  become: yes
+  vars:
+    host_name: "{{ inventory_hostname }}"
+    node_state: BACKUP
+    node_priority: 100
+    virtual_ip: "{{ lookup('file', './addr_vip') }}"
+  tasks:
+    - name: configure keepalived
+      template:
+        src: keepalived.conf.j2
+        dest: /etc/keepalived/keepalived.conf
+    
+- name: Restart Keepalived
+  hosts: HAproxy
+  become: yes
+  tasks:
+    - name: Ensure Keepalived service is running
+      systemd:
+        name: keepalived
+        enabled: yes
+
+    - name: restart keepalived
+      service:
+        name: keepalived
+        state: restarted
+        
+    - name: start keepalived
+      service:
+        name: keepalived
+        state: started
+- name: Installing Prometheus and Grafana on Bastion
+  hosts: bastion
+  gather_facts: yes
+  become: true
+  tasks:
+    - name : sudo wait
+      become: yes
+      shell: while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1; do sleep 5; done;
+ 
+    - name: gather server ip addresses
+      setup:
+          filter: ansible_default_ipv4.address     
+
+    - name: Configuring Dependencies 
+      copy:
+        src: "prometheus_grafana.sh"
+        dest: "prometheus_grafana.sh"
+        mode: '0755'
+    
+    - name: Executing Dependencies 
+      command: bash prometheus_grafana.sh
+
+    - name: copy prometheus.yml
+      template:
+        src: "prometheus.yml.j2"
+        dest: "/etc/prometheus/prometheus.yml"
+
+    - name: Restart prometheus
+      systemd:
+        name: prometheus
+        state: restarted 
+       
+- name: Installing Node exporter on nodes
+  hosts: dev
+  gather_facts: yes
+  become: true
+  tasks:
+  
+    - name: gather server ip addresses
+      setup:
+            filter: ansible_default_ipv4.address
+
+    - name : sudo wait
+      become: yes
+      shell: while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1; do sleep 5; done;
+
+    - name: Configuring Dependencies 
+      copy:
+        src: "exporter.sh"
+        dest: "exporter.sh"
+        mode: '0755'
+    
+    - name: Executing Dependencies
+      command: bash exporter.sh
+
