@@ -1,0 +1,13 @@
+[bastion]
+prud_bastion ansible_host=10.0.0.78 ansible_ssh_user=ubuntu ansible_ssh_private_key_file= ~/.ssh
+
+[main_proxy]
+prud_proxy1 ansible_host=10.0.0.184 ansible_ssh_user=ubuntu ansible_ssh_private_key_file= ~/.ssh
+[backup_proxy]
+prud_proxy2 ansible_host=10.0.0.241 ansible_ssh_user=ubuntu ansible_ssh_private_key_file=~/.ssh
+
+[dev]
+prud_node1 ansible_host=10.0.0.235 ansible_ssh_user=ubuntu ansible_ssh_private_key_file=~/.ssh
+prud_node2 ansible_host=10.0.0.10 ansible_ssh_user=ubuntu ansible_ssh_private_key_file=~/.ssh
+prud_node3 ansible_host=10.0.0.200 ansible_ssh_user=ubuntu ansible_ssh_private_key_file=~/.ssh
+prud_node4 ansible_host=10.0.0.254 ansible_ssh_user=ubuntu ansible_ssh_private_key_file=~/.ssh
