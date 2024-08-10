@@ -107,7 +107,23 @@ def create_security_group(conn, tag):
         logging.info(f"Security group {sec_group.name} already exists")
     return sec_group
 
-def create_instance(conn, name, tag, image_name, flavor_name, network_id, sec_group, key_name, floating_ip_pool=None):
+def server_exists(conn, server_name):
+    """
+    Checks if a server with the given name already exists.
+    """
+    server = conn.compute.find_server(server_name)
+    if server:
+        return True
+    return False
+
+def create_instance_if_not_exists(conn, name, tag, image_name, flavor_name, network_id, sec_group, key_name, floating_ip_pool=None):
+    """
+    Creates a server if it doesn't already exist.
+    """
+    if server_exists(conn, name):
+        logging.info(f"Server '{name}' already exists. Skipping creation.")
+        return None
+
     image = conn.compute.find_image(name_or_id=image_name)
     if not image:
         raise ValueError(f"Image {image_name} not found. Available images: {[img.name for img in conn.compute.images()]}")
@@ -199,12 +215,16 @@ def main(openrc, tag, public_key_path):
 
     logging.info(f"Creating instances with tag {tag}.")
     instances = {
-        "bastion": create_instance(conn, tag + "_bastion", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
-        "proxy1": create_instance(conn, tag + "_proxy1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
-        "proxy2": create_instance(conn, tag + "_proxy2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
-        "node1": create_instance(conn, tag + "_node1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
-        "node2": create_instance(conn, tag + "_node2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag)
+        "bastion": create_instance_if_not_exists(conn, tag + "_bastion", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
+        "proxy1": create_instance_if_not_exists(conn, tag + "_proxy1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
+        "proxy2": create_instance_if_not_exists(conn, tag + "_proxy2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
+        "node1": create_instance_if_not_exists(conn, tag + "_node1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
+        "node2": create_instance_if_not_exists(conn, tag + "_node2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
+        "node3": create_instance_if_not_exists(conn, tag + "_node3", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
     }
+
+    # Filter out instances that were not created
+    instances = {name: inst for name, inst in instances.items() if inst is not None}
 
     internal_ips = {name: inst["internal_ip"] for name, inst in instances.items()}
     floating_ips = {name: inst["floating_ip"] for name, inst in instances.items()}
