@@ -14,6 +14,7 @@ def load_openrc(openrc):
 
 def delete_instance(conn, name):
     instances = list(conn.compute.servers(name=name))
+    instances = list(conn.compute.servers(name=name))
     if not instances:
         print(f"Instance {name} not found")
     else:
@@ -38,6 +39,8 @@ def delete_security_group(conn, sec_group_name):
             if sec_group.id in port.security_group_ids:
                 conn.network.delete_port(port.id)
                 print(f"Deleted port {port.id} associated with security group {sec_group_name}")
+                conn.network.delete_port(port.id)
+                print(f"Deleted port {port.id} associated with security group {sec_group_name}")
 
         max_retries = 5
         for attempt in range(max_retries):
@@ -45,6 +48,7 @@ def delete_security_group(conn, sec_group_name):
                 conn.network.delete_security_group(sec_group)
                 print(f"Deleted security group {sec_group_name}")
                 break
+            except openstack.exceptions.ConflictException:
             except openstack.exceptions.ConflictException:
                 print(f"Attempt {attempt + 1}: Security group {sec_group_name} in use, retrying...")
                 time.sleep(5)
@@ -62,13 +66,20 @@ def delete_network(conn, network_name):
             for port in ports:
                 if any(ip['subnet_id'] == subnet.id for ip in port.fixed_ips):
                     if port.device_owner.startswith("network:router_interface") or port.device_owner == "network:ha_router_replicated_interface":
+                if any(ip['subnet_id'] == subnet.id for ip in port.fixed_ips):
+                    if port.device_owner.startswith("network:router_interface") or port.device_owner == "network:ha_router_replicated_interface":
                         router_id = port.device_id
                         conn.network.remove_interface_from_router(router_id, subnet_id=subnet.id)
                         print(f"Removed interface {port.id} from router {router_id}")
                     conn.network.delete_port(port.id)
                     print(f"Deleted port {port.id} associated with subnet {subnet.id}")
             conn.network.delete_subnet(subnet.id)
+                        print(f"Removed interface {port.id} from router {router_id}")
+                    conn.network.delete_port(port.id)
+                    print(f"Deleted port {port.id} associated with subnet {subnet.id}")
+            conn.network.delete_subnet(subnet.id)
             print(f"Deleted subnet {subnet.name}")
+        conn.network.delete_network(network.id)
         conn.network.delete_network(network.id)
         print(f"Deleted network {network_name}")
     else:
