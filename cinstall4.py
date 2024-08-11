@@ -188,7 +188,6 @@ def delete_unused_floating_ips(conn, tag):
 
 def get_router_ports(conn, router_id):
     return [port for port in conn.network.ports(device_id=router_id)]
-
 def run_playbook(tag):
     logging.info("Running Ansible playbook...")
     
@@ -199,6 +198,19 @@ def run_playbook(tag):
     ansible_command = f"ansible-playbook -i {ansible_inventory_path} site.yaml"
     subprocess.run(ansible_command, shell=True)
     logging.info("Ansible playbook execution complete.")
+
+
+def create_hosts(tag, num_dev_servers):
+    logging.info("Creating hosts file...")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    hosts_file_script = os.path.join(script_dir, "hosts_file.py")
+    output_file_path = os.path.join(script_dir, "hosts")
+    
+    subprocess.run(
+        ["python3", hosts_file_script, tag, str(num_dev_servers), output_file_path],
+        check=True
+    )
 
 def validate_operation():
     logging.info("Validation completed.")
@@ -227,7 +239,7 @@ def main(openrc, tag, public_key_path):
         "proxy2": create_instance_if_not_exists(conn, tag + "_proxy2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
         "node1": create_instance_if_not_exists(conn, tag + "_node1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
         "node2": create_instance_if_not_exists(conn, tag + "_node2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
-        # "node3": create_instance_if_not_exists(conn, tag + "_node3", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
+        #"node3": create_instance_if_not_exists(conn, tag + "_node3", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
     }
 
     # Filter out instances that were not created
@@ -247,6 +259,12 @@ def main(openrc, tag, public_key_path):
     logging.info(f"Creating SSH configuration file.")
     create_ssh_config_file(tag, instance_details)
 
+    logging.info(f"Creating hosts file.")
+    #os.path.join(os.path.dirname(__file__), "hosts")
+    # hostnames_file = "hosts"
+    create_hosts(tag, 5, "hosts")
+
+
     logging.info("Executing Ansible playbook.")
     run_playbook(tag)
 
@@ -254,7 +272,7 @@ def main(openrc, tag, public_key_path):
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
-        print("Usage: python cinstall4.py <path-to-openrc> <tag> <public-key-path>")
+        print("Usage: python install.py <path-to-openrc> <tag> <public-key-path>")
         sys.exit(1)
 
     main(sys.argv[1], sys.argv[2], sys.argv[3])
