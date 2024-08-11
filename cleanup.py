@@ -116,6 +116,13 @@ def delete_router(conn, router_name):
         detach_subnets_from_router(conn, router_id)
         delete_ports_associated_with_router(conn, router_id)
         remove_external_gateway(conn, router_id)
+        try:
+            
+            del_router_command = f"openstack router delete " + router_id
+            subprocess.run(del_router_command, shell=True)
+            print(f"deletd {tag} router")
+        except Exception as e:
+            print(f"failed to delete the {router_id}")
 
         try:
             conn.network.delete_router(router_id)
@@ -149,6 +156,8 @@ def main(openrc, tag, ssh_key):
     delete_network(conn, tag + "_network")
 
     routers = list(conn.network.routers(name=tag + "_"))
+    router_addr= tag+"_router"
+    delete_router(conn,router_addr)
     for router in routers:
         delete_router(conn, router.name)
 
