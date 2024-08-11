@@ -33,7 +33,9 @@ def get_unused_floating_ip(conn, floating_ip_pool):
     return created_ip
 
 def create_keypair(conn, keypair_name):
-    private_key_file = os.path.expanduser(f"~/.ssh/{keypair_name}.pem")
+    # Get the directory where the script is located
+    script_dir = os.path.dirname(__file__)
+    private_key_file = os.path.join(script_dir, f"{keypair_name}.pem")
     
     existing_keypair = conn.compute.find_keypair(keypair_name)
     if not existing_keypair:
@@ -189,7 +191,12 @@ def get_router_ports(conn, router_id):
 
 def run_playbook(tag):
     logging.info("Running Ansible playbook...")
-    ansible_command = f"ansible-playbook -i ~/.ssh/{tag}_config site.yaml"
+    
+    # Get the directory where the script is located
+    script_dir = os.path.dirname(__file__)
+    ansible_inventory_path = os.path.join(script_dir, f"{tag}_config")
+
+    ansible_command = f"ansible-playbook -i {ansible_inventory_path} site.yaml"
     subprocess.run(ansible_command, shell=True)
     logging.info("Ansible playbook execution complete.")
 
@@ -220,7 +227,7 @@ def main(openrc, tag, public_key_path):
         "proxy2": create_instance_if_not_exists(conn, tag + "_proxy2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
         "node1": create_instance_if_not_exists(conn, tag + "_node1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
         "node2": create_instance_if_not_exists(conn, tag + "_node2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
-        "node3": create_instance_if_not_exists(conn, tag + "_node3", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
+        # "node3": create_instance_if_not_exists(conn, tag + "_node3", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
     }
 
     # Filter out instances that were not created
@@ -251,4 +258,3 @@ if __name__ == "__main__":
         sys.exit(1)
 
     main(sys.argv[1], sys.argv[2], sys.argv[3])
-    
