@@ -175,3 +175,4 @@ while True:
                     file.write(f"{dev_name} ansible_host={dev_ip} ansible_ssh_user=ubuntu ansible_ssh_private_key_file={ssh_key}\n")
 
         execute_ansible_tasks()
+
