@@ -5,7 +5,8 @@ import subprocess
 import logging
 import datetime
 import json
-from create_ssh_config import create_ssh_config_file  # Import the function from the module
+import time
+from create_ssh_config_final import create_ssh_config_file , write_hosts
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
@@ -32,18 +33,15 @@ def get_unused_floating_ip(conn, floating_ip_pool):
     created_ip = conn.network.create_ip(floating_network_id=floating_ip_pool)
     return created_ip
 
-def create_keypair(conn, keypair_name):
+def create_keypair(conn, keypair_name, public_key_path):
     # Get the directory where the script is located
-    script_dir = os.path.dirname(__file__)
-    private_key_file = os.path.join(script_dir, f"{keypair_name}.pem")
-    
+    keypair_name = str(keypair_name) + "_key"
+    with open(public_key_path) as public_key:
+        public_key = public_key.read()
     existing_keypair = conn.compute.find_keypair(keypair_name)
     if not existing_keypair:
-        new_keypair = conn.compute.create_keypair(name=keypair_name)
-        with open(private_key_file, 'w') as key_file:
-            key_file.write(new_keypair.private_key)
-        os.chmod(private_key_file, 0o600)
-        logging.info(f"Key pair '{keypair_name}' was successfully created and stored at '{private_key_file}'.")
+        conn.compute.create_keypair(name=keypair_name, public_key = public_key)
+        logging.info(f"Key pair '{keypair_name}' was successfully created.")
     else:
         logging.info(f"Key pair '{keypair_name}' already exists.")
 
@@ -108,20 +106,20 @@ def create_security_group(conn, tag):
     else:
         logging.info(f"Security group {sec_group.name} already exists")
     return sec_group
-
 def server_exists(conn, server_name):
     """
     Checks if a server with the given name already exists.
     """
     server = conn.compute.find_server(server_name)
     if server:
-        return True
+        return server
     return False
 
 def create_instance_if_not_exists(conn, name, tag, image_name, flavor_name, network_id, sec_group, key_name, floating_ip_pool=None):
     """
     Creates a server if it doesn't already exist.
     """
+    key_name = str(key_name) + "_key"
     if server_exists(conn, name):
         logging.info(f"Server '{name}' already exists. Skipping creation.")
         return None
@@ -188,6 +186,7 @@ def delete_unused_floating_ips(conn, tag):
 
 def get_router_ports(conn, router_id):
     return [port for port in conn.network.ports(device_id=router_id)]
+
 def run_playbook(tag):
     logging.info("Running Ansible playbook...")
     
@@ -195,22 +194,9 @@ def run_playbook(tag):
     script_dir = os.path.dirname(__file__)
     ansible_inventory_path = os.path.join(script_dir, f"{tag}_config")
 
-    ansible_command = f"ansible-playbook -i {ansible_inventory_path} site.yaml"
+    ansible_command = f"ansible-playbook  --ssh-common-args '-F {tag}_config' -i hosts  site.yaml"
     subprocess.run(ansible_command, shell=True)
     logging.info("Ansible playbook execution complete.")
-
-
-def create_hosts(tag, num_dev_servers):
-    logging.info("Creating hosts file...")
-
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    hosts_file_script = os.path.join(script_dir, "hosts_file.py")
-    output_file_path = os.path.join(script_dir, "hosts")
-    
-    subprocess.run(
-        ["python3", hosts_file_script, tag, str(num_dev_servers), output_file_path],
-        check=True
-    )
 
 def validate_operation():
     logging.info("Validation completed.")
@@ -224,7 +210,7 @@ def main(openrc, tag, public_key_path):
     delete_unused_resources(conn, tag)
 
     logging.info("Creating keypair.")
-    create_keypair(conn, tag)
+    create_keypair(conn, tag, public_key_path)
 
     logging.info("Creating network.")
     network = create_network(conn, tag)
@@ -239,7 +225,7 @@ def main(openrc, tag, public_key_path):
         "proxy2": create_instance_if_not_exists(conn, tag + "_proxy2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
         "node1": create_instance_if_not_exists(conn, tag + "_node1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
         "node2": create_instance_if_not_exists(conn, tag + "_node2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
-        #"node3": create_instance_if_not_exists(conn, tag + "_node3", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
+        # "node3": create_instance_if_not_exists(conn, tag + "_node3", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
     }
 
     # Filter out instances that were not created
@@ -256,23 +242,27 @@ def main(openrc, tag, public_key_path):
         } for name in instances.keys()
     }
 
+    logging.info(f"Creating the hosts file.")
+    write_hosts(tag, instances)
     logging.info(f"Creating SSH configuration file.")
-    create_ssh_config_file(tag, instance_details)
 
-    logging.info(f"Creating hosts file.")
-    #os.path.join(os.path.dirname(__file__), "hosts")
-    # hostnames_file = "hosts"
-    create_hosts(tag, 5, "hosts")
+    # Write the instances dictionary to a file
+    instances_file_path = os.path.join(os.getcwd(), "instances.json")
+    with open(instances_file_path, 'w') as instances_file:
+        json.dump(instance_details, instances_file, indent=4)
+    logging.info(f"Instances details written to {instances_file_path}")
 
+    # Pass the instances file path to create_ssh_config_file
+    create_ssh_config_file(tag, instances_file_path, str(os.path.abspath(public_key_path))[:-4])
 
     logging.info("Executing Ansible playbook.")
+    time.sleep(20)
     run_playbook(tag)
 
     validate_operation()
-
 if __name__ == "__main__":
     if len(sys.argv) != 4:
-        print("Usage: python install.py <path-to-openrc> <tag> <public-key-path>")
+        print("Usage: python cinstall4.py <path-to-openrc> <tag> <public-key-path>")
         sys.exit(1)
 
     main(sys.argv[1], sys.argv[2], sys.argv[3])
