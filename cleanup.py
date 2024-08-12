@@ -108,6 +108,7 @@ def remove_external_gateway(conn, router_id):
         except Exception as e:
             print(f"Failed to remove external gateway from router {router_id}: {e}")
 
+
 def delete_router(conn, router_name):
     router = conn.network.find_router(router_name)
     if router:
@@ -116,14 +117,7 @@ def delete_router(conn, router_name):
         detach_subnets_from_router(conn, router_id)
         delete_ports_associated_with_router(conn, router_id)
         remove_external_gateway(conn, router_id)
-        try:
-            
-            del_router_command = f"openstack router delete " + router_id
-            subprocess.run(del_router_command, shell=True)
-            print(f"deletd {tag} router")
-        except Exception as e:
-            print(f"failed to delete the {router_id}")
-
+        
         try:
             conn.network.delete_router(router_id)
             print(f"Deleted router {router_name}")
