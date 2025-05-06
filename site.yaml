@@ -70,17 +70,22 @@
 
     - name: configure snmpd
       template:
-             src: snmpd.conf
-             dest: /etc/snmp/snmpd.conf
-
-    - name: restarting snmpd
-      service:
-            name: snmpd
-            state: restarted
+        src: snmpd.conf.j2
+        dest: /etc/snmp/snmpd.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart snmpd
 
     - name: apt update
       apt:
         update_cache: true
+
+  handlers:
+    - name: restart snmpd
+      service:
+        name: snmpd
+        state: restarted
   
 - hosts: all
   gather_facts: true
@@ -255,4 +260,3 @@
     
     - name: Executing Dependencies
       command: bash exporter.sh
-

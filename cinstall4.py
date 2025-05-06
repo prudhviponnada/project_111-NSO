@@ -6,7 +6,7 @@ import logging
 import datetime
 import json
 import time
-from create_ssh_config_final import create_ssh_config_file , write_hosts
+from create_ssh_config import create_ssh_config_file , write_hosts
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
