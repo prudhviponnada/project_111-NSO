@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import openstack
 import sys
 import os
@@ -156,7 +158,13 @@ def main(openrc, tag, ssh_key):
         delete_router(conn, router.name)
 
     delete_floating_ips(conn)
-
+    remove_files = ['hosts', 'instances.json', tag + '_config']
+    for file in remove_files: 
+        if os.path.exists(file):
+            os.remove(file)
+            print(file, "deleted.")
+        else:
+            print(file, "does not exist.")
 if __name__ == "__main__":
     if len(sys.argv) != 4:
         print("Usage: cleanup.py <openrc> <tag> <ssh_key>")
