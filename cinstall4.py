@@ -144,20 +144,21 @@ def create_instance_if_not_exists(conn, name, tag, image_name, flavor_name, netw
     )
     conn.compute.wait_for_server(instance)
     logging.info(f"Created instance {name}")
-
+    internal_ip = instance.addresses.get(tag + "_network")[0]["addr"]
     floating_ip_address = None
     if name in [tag + "_bastion", tag + "_proxy1", tag + "_proxy2"]:
         if floating_ip_pool:
             try:
                 external_network_id = get_external_network(conn)
                 floating_ip = get_unused_floating_ip(conn, external_network_id)
-                conn.compute.add_floating_ip_to_server(instance, floating_ip.floating_ip_address)
+                ports = list(conn.network.ports(device_id=instance.id))
+                conn.network.update_ip(floating_ip, port_id=ports[0].id)
                 floating_ip_address = floating_ip.floating_ip_address
                 logging.info(f"Assigned floating IP {floating_ip_address} to instance {name}")
             except Exception as e:
                 logging.error(f"Failed to assign floating IP to instance {name}: {str(e)}")
 
-    internal_ip = instance.addresses.get(tag + "_network")[0]["addr"]
+    
 
     logging.info(f"Instance {name} - Internal IP: {internal_ip}, Floating IP: {floating_ip_address}")
 
