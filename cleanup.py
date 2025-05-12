@@ -3,16 +3,8 @@
 import openstack
 import sys
 import os
-import subprocess
 import time
-
-def load_openrc(openrc):
-    command = f"bash -c 'source {openrc} && env'"
-    proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
-    for line in proc.stdout:
-        (key, _, value) = line.decode("utf-8").partition("=")
-        os.environ[key] = value.strip()
-    proc.communicate()
+from openrc import load_openrc
 
 def delete_instance(conn, name):
     instances = list(conn.compute.servers(name=name))

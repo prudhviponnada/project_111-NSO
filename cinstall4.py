@@ -3,27 +3,19 @@
 import openstack
 import sys
 import os
-import subprocess
+
 import logging
 import datetime
+import subprocess
 import json
 import time
 from create_ssh_config import create_ssh_config_file , write_hosts
 from create_server import create_instance_if_not_exists
 from network_files import get_external_network
+from openrc import load_openrc
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-
-def load_openrc(openrc):
-    command = f"bash -c 'source {openrc} && env'"
-    proc = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True)
-    for line in proc.stdout:
-        (key, _, value) = line.decode("utf-8").partition("=")
-        os.environ[key] = value.strip()
-    proc.communicate()
-
-
 
 def create_keypair(conn, keypair_name, public_key_path):
     # Get the directory where the script is located
