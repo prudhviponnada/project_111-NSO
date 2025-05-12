@@ -11,7 +11,7 @@ import json
 import time
 from create_ssh_config import create_ssh_config_file , write_hosts
 from create_server import create_instance_if_not_exists
-from network_files import get_external_network
+from network_files import get_external_network, get_unused_floating_ip
 from openrc import load_openrc
 
 # Configure logging
@@ -31,6 +31,8 @@ def create_keypair(conn, keypair_name, public_key_path):
 
 def create_network(conn, tag):
     network = conn.network.find_network(tag + "_network")
+    if network: 
+        subnet = conn.network.find_subnet(tag+"_subnet")
     if not network:
         network = conn.network.create_network(name=tag + "_network")
         subnet = conn.network.create_subnet(
@@ -44,7 +46,7 @@ def create_network(conn, tag):
         logging.info(f"Created network, subnet, and router: {network.name}, {subnet.name}, {router.name}")
     else:
         logging.info(f"Network {network.name} already exists")
-    return network
+    return network, subnet
 
 def get_or_create_router(conn, tag):
     router = conn.network.find_router(tag + "_router")
@@ -55,7 +57,38 @@ def get_or_create_router(conn, tag):
     else:
         logging.info(f"Router {router.name} already exists")
     return router
-
+def create_port_keepalived(conn, network, subnet, sec_group):
+    # Create a port and attach a floating ip to it 
+    keepalived_port = None
+    try: 
+        keepalived_port = conn.network.find_port('my-keepalived-port')
+    except openstack.exceptions.ResourceNotFound:
+        keepalived_port = None
+        
+    if keepalived_port == None:
+        keepalived_port = conn.network.create_port(
+        name='my-keepalived-port',
+        network_id=network.id,
+        fixed_ips=[{'subnet_id': subnet.id}],
+        security_groups=[sec_group.id],
+        )
+    
+    logging.info("Create a floating ip")
+    # create a flaoting ip 
+    external_network_id = get_external_network(conn)
+    keepalived_floating_ip = get_unused_floating_ip(conn, external_network_id, fixed_ip= keepalived_port.fixed_ips[0]['ip_address'])
+    
+    logging.info("Attach floating ip to port")
+    # attach a floating ip to the kkepalived port
+    try:
+        conn.network.update_ip(
+        keepalived_floating_ip,
+        port_id=keepalived_port.id
+        )
+    except openstack.exceptions.ConflictException: 
+        pass
+    return keepalived_port, keepalived_floating_ip
+    
 def create_security_group(conn, tag):
     sec_group = conn.network.find_security_group(tag + "_secgroup")
     if not sec_group:

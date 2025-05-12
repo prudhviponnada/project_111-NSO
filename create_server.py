@@ -11,7 +11,7 @@ def server_exists(conn, server_name):
         return server
     return False
 
-def create_instance_if_not_exists(conn, name, tag, image_name, flavor_name, network_id, sec_group, key_name, floating_ip_pool=None):
+def create_instance_if_not_exists(conn, name, tag, image_name, flavor_name, network_id, sec_group, key_name, floating_ip_pool=None, allowed_address = None):
     """
     Creates a server if it doesn't already exist.
     """
@@ -40,24 +40,26 @@ def create_instance_if_not_exists(conn, name, tag, image_name, flavor_name, netw
     logging.info(f"Created instance {name}")
     internal_ip = instance.addresses.get(tag + "_network")[0]["addr"]
     floating_ip_address = None
-    if name in [tag + "_bastion", tag + "_proxy1", tag + "_proxy2"]:
-        if floating_ip_pool:
-            try:
-                external_network_id = get_external_network(conn)
-                floating_ip = get_unused_floating_ip(conn, external_network_id)
-                ports = list(conn.network.ports(device_id=instance.id))
-                conn.network.update_ip(floating_ip, port_id=ports[0].id)
-                floating_ip_address = floating_ip.floating_ip_address
-                logging.info(f"Assigned floating IP {floating_ip_address} to instance {name}")
-            except Exception as e:
-                logging.error(f"Failed to assign floating IP to instance {name}: {str(e)}")
-
     
+    if floating_ip_pool:
+        try:
+            external_network_id = get_external_network(conn)
+            floating_ip = get_unused_floating_ip(conn, external_network_id)
+            port = list(conn.network.ports(device_id=instance.id))
+            conn.network.update_ip(floating_ip, port_id=port[0].id)
+            floating_ip_address = floating_ip.floating_ip_address
+            logging.info(f"Assigned floating IP {floating_ip_address} to instance {name}")
+        except Exception as e:
+            logging.error(f"Failed to assign floating IP to instance {name}: {str(e)}")
 
     logging.info(f"Instance {name} - Internal IP: {internal_ip}, Floating IP: {floating_ip_address}")
-
+    if name == tag+'_proxy1' or name == tag+'_proxy2':
+        port = list(conn.network.ports(device_id=instance.id))
+        conn.network.update_port(port[0].id, allowed_address_pairs=[{"ip_address": allowed_address}])
+        
     return {
         "name": name,
         "internal_ip": internal_ip,
         "floating_ip": floating_ip_address
     }
+    
