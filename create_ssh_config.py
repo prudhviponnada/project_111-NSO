@@ -7,16 +7,11 @@ def write_hosts(tag, instances):
         f.write('[bastion]\n')
         hostname = tag + '_bastion'
         f.write(f'{hostname}\n')
+        
+        f.write('\n')
         f.write('[HAproxy]\n')
         hostname = tag + '_proxy1'
         f.write(f'{hostname}\n')
-        hostname = tag + '_proxy2'
-        f.write(f'{hostname}\n')
-        f.write('\n')
-        f.write('[primary_proxy]\n')
-        hostname = tag + '_proxy1'
-        f.write(f'{hostname}\n')
-        f.write('[backup_proxy]\n')
         hostname = tag + '_proxy2'
         f.write(f'{hostname}\n')
         f.write('\n')
@@ -52,13 +47,13 @@ def create_ssh_config_file(tag, instances_file_path, private_key_path):
         # Loop through the instances and configure each one
         for name, details in instances.items():
             
-            if name == "bastion":
-                file.write(f"Host {tag}_{name}\n")
+            if name == f"{tag}_bastion":
+                file.write(f"Host {name}\n")
                 file.write(f"\tHostName {details['floating_ip']}\n")
             
                 
             else:
-                file.write(f"Host {tag}_{name}\n")
+                file.write(f"Host {name}\n")
                 file.write(f"\tHostName {details['internal_ip']}\n")
                 file.write(f"\tproxyjump {tag}_bastion\n")
             file.write("\n")

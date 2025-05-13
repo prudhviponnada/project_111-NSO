@@ -76,7 +76,7 @@ def count_servers(conn, tag):
 def delete_tagged_instances(conn, tag):
     server_count = count_servers(conn, tag)
     for i in range(1, server_count - 2):
-        server_name = f"{tag}_node{i}"
+        server_name = f"{tag}_dev{i}"
         delete_instance(conn, server_name)
 
 def delete_ports_associated_with_router(conn, router_id):

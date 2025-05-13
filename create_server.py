@@ -16,9 +16,19 @@ def create_instance_if_not_exists(conn, name, tag, image_name, flavor_name, netw
     Creates a server if it doesn't already exist.
     """
     key_name = str(key_name) + "_key"
-    if server_exists(conn, name):
+    check_server = server_exists(conn, name)
+    if check_server:
         logging.info(f"Server '{name}' already exists. Skipping creation.")
-        return None
+        try: 
+            floating_ip = check_server.addresses.get(tag + "_network")[1]["addr"]
+        except Exception as e:
+            floating_ip = None
+              
+        return {
+        "name": name,
+        "internal_ip": check_server.addresses.get(tag + "_network")[0]["addr"],
+        "floating_ip": floating_ip
+    }
 
     image = conn.compute.find_image(name_or_id=image_name)
     if not image:

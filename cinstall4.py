@@ -172,21 +172,29 @@ def main(openrc, tag, public_key_path):
     create_keypair(conn, tag, public_key_path)
 
     logging.info("Creating network.")
-    network = create_network(conn, tag)
-
+    network, subnet = create_network(conn, tag)
+    
+    
     logging.info("Creating security group.")
     sec_group = create_security_group(conn, tag)
-
+    
+    
+    logging.info("Create a port for keepalived")
+    keepalived_port, keepalived_floating_ip = create_port_keepalived(conn, network, subnet, sec_group)
+    
     logging.info(f"Creating instances with tag {tag}.")
     instances = {
-        "bastion": create_instance_if_not_exists(conn, tag + "_bastion", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
-        "proxy1": create_instance_if_not_exists(conn, tag + "_proxy1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
-        "proxy2": create_instance_if_not_exists(conn, tag + "_proxy2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag, floating_ip_pool=True),
-        "node1": create_instance_if_not_exists(conn, tag + "_node1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
-        "node2": create_instance_if_not_exists(conn, tag + "_node2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
-        # "node3": create_instance_if_not_exists(conn, tag + "_node3", tag, "Ubuntu 20.04 Focal Fossa x86_64", "m1.small", network.id, sec_group, tag),
+        f"{tag}_bastion": create_instance_if_not_exists(conn, tag + "_bastion", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=True),
+        f"{tag}_proxy1": create_instance_if_not_exists(conn, tag + "_proxy1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False, allowed_address=keepalived_port.fixed_ips[0]['ip_address']),
+        f"{tag}_proxy2": create_instance_if_not_exists(conn, tag + "_proxy2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False, allowed_address=keepalived_port.fixed_ips[0]['ip_address'])
     }
-
+    #Create the no of backend servers as per server.conf
+    with open("servers.conf", "r") as file:
+        no_servers = file.read()
+    for i in range(1, int(no_servers)+ 1):
+        logging.info(f"Creating the {tag}_dev{i} backend server")
+        instances[tag+'_dev'+str(i)] = create_instance_if_not_exists(conn, tag+"_dev"+str(i), tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False)
+        
     # Filter out instances that were not created
     instances = {name: inst for name, inst in instances.items() if inst is not None}
 
