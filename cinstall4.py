@@ -87,6 +87,8 @@ def create_port_keepalived(conn, network, subnet, sec_group):
         )
     except openstack.exceptions.ConflictException: 
         pass
+    conn.network.update_port(keepalived_port.id, allowed_address_pairs=[{"ip_address": keepalived_floating_ip.floating_ip_address}])
+        
     return keepalived_port, keepalived_floating_ip
     
 def create_security_group(conn, tag):
@@ -119,6 +121,24 @@ def create_security_group(conn, tag):
             port_range_min='6000',
             port_range_max='6000'
         )
+        conn.network.create_security_group_rule(
+            security_group_id=sec_group.id,
+            direction='ingress',
+            protocol='udp',
+            remote_group_id = sec_group.id
+        )
+        conn.network.create_security_group_rule(
+            security_group_id=sec_group.id,
+            direction='ingress',
+            protocol='tcp',
+            remote_group_id = sec_group.id
+        )
+        conn.network.create_security_group_rule(
+            security_group_id=sec_group.id,
+            direction='ingress',
+            protocol='icmp',
+            remote_group_id = sec_group.id
+        )
         logging.info(f"Created security group {sec_group.name}")
     else:
         logging.info(f"Security group {sec_group.name} already exists")
@@ -146,14 +166,14 @@ def delete_unused_floating_ips(conn, tag):
 def get_router_ports(conn, router_id):
     return [port for port in conn.network.ports(device_id=router_id)]
 
-def run_playbook(tag):
+def run_playbook(tag, virtual_ip = None):
     logging.info("Running Ansible playbook...")
     
     # Get the directory where the script is located
     script_dir = os.path.dirname(__file__)
     ansible_inventory_path = os.path.join(script_dir, f"{tag}_config")
 
-    ansible_command = f"ansible-playbook  --ssh-common-args '-F {tag}_config' -i hosts  site.yaml"
+    ansible_command = f"ansible-playbook  --ssh-common-args '-F {tag}_config' -i hosts  site.yaml -e 'virtual_ip={virtual_ip}'"
     subprocess.run(ansible_command, shell=True)
     logging.info("Ansible playbook execution complete.")
 
@@ -224,7 +244,7 @@ def main(openrc, tag, public_key_path):
 
     logging.info("Executing Ansible playbook.")
     time.sleep(20)
-    run_playbook(tag)
+    run_playbook(tag, virtual_ip=keepalived_port.fixed_ips[0]['ip_address'])
 
     validate_operation()
 if __name__ == "__main__":

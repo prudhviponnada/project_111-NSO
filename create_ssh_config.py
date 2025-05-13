@@ -11,9 +11,9 @@ def write_hosts(tag, instances):
         f.write('\n')
         f.write('[HAproxy]\n')
         hostname = tag + '_proxy1'
-        f.write(f'{hostname}\n')
+        f.write(f'{hostname} node_state=MASTER node_priority=100 \n')
         hostname = tag + '_proxy2'
-        f.write(f'{hostname}\n')
+        f.write(f'{hostname} node_state=BACKUP node_priority=90 \n')
         f.write('\n')
         
         f.write('[dev]\n')

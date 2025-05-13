@@ -6,8 +6,6 @@ vrrp_instance VI_1 {
     advert_int 1
     
     virtual_ipaddress {
-        {% for ip in virtual_ip %}
-        {{ ip }}/24
-        {% endfor %}
+        {{ virtual_ip }}/32
     }
 }
