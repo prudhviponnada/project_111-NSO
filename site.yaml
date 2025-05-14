@@ -70,9 +70,11 @@
       template:
         src: ./templates/keepalived.conf.j2
         dest: /etc/keepalived/keepalived.conf
-        owner: root
-        group: root
-        mode: '0644'
+        
+    - name: template haproxy 
+      template: 
+        src: ./templates/haproxy.conf
+        desst: /etc/haproxy/haproxy.conf
 
     - name: Restart haproxy
       service:
