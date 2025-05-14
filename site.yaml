@@ -1,85 +1,42 @@
 ---
-- hosts: all 
-  gather_facts: no
-  become: yes
-  become_method: sudo
-  tasks:
-    - name: updating all hosts 
-      apt:
-        update_cache: yes
-    - name : sudo wait
-      become: yes
-      shell: while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1; do sleep 5; done;
 
 - hosts: dev 
   become: true
   become_method: sudo
   gather_facts: no
   tasks:
-    - name: update all dev 
+    - name: Update APT cache
       apt:
-        update_cache: true
-
-    - name: Installing nginx
+        update_cache: yes
+        cache_valid_time: 7200
+        
+    - name: Install all required APT packages
       apt:
-        name: nginx
+        name:
+          - nginx
+          - python3-pip
+          - snmpd
         state: latest
-        update_cache: true
 
-    - name: pip install
-      apt:
-        name: python3-pip
-        state: latest
-        update_cache: true
-
-    - name: Installing flask app
+    - name: Install all required Python packages via pip
       pip:
         executable: pip3
-        name: flask
+        name:
+          - flask
+          - gunicorn
         state: latest
 
-    - name: apt update
-      apt:
-        update_cache: true
-
-    - name: Installing flask service deployment
-      pip:
-        executable: pip3
-        name: gunicorn
-        state: latest
-
-    - name: apt update
-      apt:
-        update_cache: true
-
-    - name: copy flask app 
+    - name: Copy Flask application
       copy:
         src: service.py
         dest: /home/ubuntu/app.py
         owner: ubuntu
         mode: '0644'
 
-    - name: deploying Flask application 
+    - name: Deploy Flask application with Gunicorn
       shell: gunicorn -w 2 -D -b 0.0.0.0:5000 app:app
-
-    - name: install snmpd 
-      apt:
-        name: snmpd
-        state: latest
-        update_cache: true
-
-    - name: configure snmpd
-      template:
-        src: snmpd.conf.j2
-        dest: /etc/snmp/snmpd.conf
-        owner: root
-        group: root
-        mode: '0644'
-      notify: restart snmpd
-
-    - name: apt update
-      apt:
-        update_cache: true
+      args:
+        chdir: /home/ubuntu
 
   handlers:
     - name: restart snmpd
@@ -87,25 +44,28 @@
         name: snmpd
         state: restarted
   
-- hosts: all
+- hosts: dev
   gather_facts: true
     
 - hosts: HAproxy
   become: true
+  gather_facts: no
   tasks: 
+    - name: Update APT cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 7200
 
-    - name: Installing HAPROXY
+    - name: Installing requird packages
       apt:
-        name: haproxy
+        name: 
+          - haproxy
+          - nginx
+          - snmp 
+          - snmp-mibs-downloader
+          - keepalived
         state: present
-        update_cache: true
    
-    - name: Installing keepalived
-      apt:
-        name: keepalived
-        state: present
-        update_cache: true
-    
     - name: Template keepalived config
       template:
         src: ./templates/keepalived.conf.j2
@@ -119,17 +79,6 @@
         name: haproxy
         state: restarted
 
-    - name: Installing Nginx
-      apt:
-        name: nginx
-        state: latest
-
-    - name: Installing snmp, snmp-mibs-downloader
-      apt: 
-        name: [ 'snmp', 'snmp-mibs-downloader' ] 
-        state: latest
-
-
     - name: Restart Nginx
       service:
         name: nginx
@@ -139,5 +88,6 @@
       service:
         name: keepalived
         state: restarted
+
 
 
