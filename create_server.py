@@ -17,6 +17,7 @@ def create_instance_if_not_exists(conn, name, tag, image_name, flavor_name, netw
     """
     key_name = str(key_name) + "_key"
     check_server = server_exists(conn, name)
+    
     if check_server:
         logging.info(f"Server '{name}' already exists. Skipping creation.")
         try: 

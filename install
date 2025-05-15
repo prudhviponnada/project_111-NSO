@@ -13,6 +13,7 @@ from create_ssh_config import create_ssh_config_file , write_hosts
 from create_server import create_instance_if_not_exists
 from network_files import get_external_network, get_unused_floating_ip
 from openrc import load_openrc
+from ansible_playbook import run_playbook, ansible_ping
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
@@ -91,7 +92,7 @@ def create_port_keepalived(conn, network, subnet, sec_group):
         
     return keepalived_port, keepalived_floating_ip
     
-def create_security_group(conn, tag):
+def create_security_group(conn, tag, subnet):
     sec_group = conn.network.find_security_group(tag + "_secgroup")
     if not sec_group:
         sec_group = conn.network.create_security_group(name=tag + "_secgroup")
@@ -125,19 +126,31 @@ def create_security_group(conn, tag):
             security_group_id=sec_group.id,
             direction='ingress',
             protocol='udp',
-            remote_group_id = sec_group.id
+            port_range_min='161',
+            port_range_max='161',
+            remote_ip_prefix = subnet.cidr
         )
         conn.network.create_security_group_rule(
             security_group_id=sec_group.id,
             direction='ingress',
             protocol='tcp',
-            remote_group_id = sec_group.id
+            port_range_min='5000',
+            port_range_max='5000',
+            remote_ip_prefix = subnet.cidr
         )
         conn.network.create_security_group_rule(
             security_group_id=sec_group.id,
             direction='ingress',
-            protocol='icmp',
-            remote_group_id = sec_group.id
+            protocol='tcp',
+            port_range_min='22',
+            port_range_max='22',
+            remote_ip_prefix = subnet.cidr
+        )
+        conn.network.create_security_group_rule(
+            security_group_id=sec_group.id,
+            direction='ingress',
+            protocol='VRRP',
+            remote_ip_prefix = subnet.cidr
         )
         logging.info(f"Created security group {sec_group.name}")
     else:
@@ -166,16 +179,6 @@ def delete_unused_floating_ips(conn, tag):
 def get_router_ports(conn, router_id):
     return [port for port in conn.network.ports(device_id=router_id)]
 
-def run_playbook(tag, virtual_ip = None):
-    logging.info("Running Ansible playbook...")
-    
-    # Get the directory where the script is located
-    script_dir = os.path.dirname(__file__)
-    ansible_inventory_path = os.path.join(script_dir, f"{tag}_config")
-
-    ansible_command = f"ansible-playbook  --ssh-common-args '-F {tag}_config' -i hosts  site.yaml -e 'virtual_ip={virtual_ip}'"
-    subprocess.run(ansible_command, shell=True)
-    logging.info("Ansible playbook execution complete.")
 
 def validate_operation():
     logging.info("Validation completed.")
@@ -194,9 +197,8 @@ def main(openrc, tag, public_key_path):
     logging.info("Creating network.")
     network, subnet = create_network(conn, tag)
     
-    
     logging.info("Creating security group.")
-    sec_group = create_security_group(conn, tag)
+    sec_group = create_security_group(conn, tag, subnet)
     
     
     logging.info("Create a port for keepalived")
@@ -241,9 +243,12 @@ def main(openrc, tag, public_key_path):
 
     # Pass the instances file path to create_ssh_config_file
     create_ssh_config_file(tag, instances_file_path, str(os.path.abspath(public_key_path))[:-4])
-
+    
+    logging.info("ping all hosts")
+    if not ansible_ping(tag):
+        exit()
+    
     logging.info("Executing Ansible playbook.")
-    time.sleep(20)
     run_playbook(tag, virtual_ip=keepalived_port.fixed_ips[0]['ip_address'])
 
     validate_operation()
@@ -253,3 +258,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
     main(sys.argv[1], sys.argv[2], sys.argv[3])
+    

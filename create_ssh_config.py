@@ -30,9 +30,6 @@ def create_ssh_config_file(tag, instances_file_path, private_key_path):
     with open(instances_file_path, 'r') as file:
         instances = json.load(file)
 
-    print(f"Tag: {tag}")
-    print(f"Instances: {instances}")
-
     ssh_config_path = os.path.expanduser(f"./{tag}_config")
     with open(ssh_config_path, "w") as file:
         file.write("# SSH Configurations\n")
