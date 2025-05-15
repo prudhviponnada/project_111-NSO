@@ -37,10 +37,11 @@ def create_ssh_config_file(tag, instances_file_path, private_key_path):
         file.write(f"\tUser ubuntu\n")
         file.write(f"\tIdentityFile {private_key_path}\n")
         file.write(f"\tStrictHostKeyChecking no\n")
+        file.write(f"\tUserKnownHostsFile /dev/null\n")
         file.write(f"\tPasswordAuthentication no\n")
         # Additional settings for all hosts
         file.write(f"\tForwardAgent yes\n")
-
+        file.write("\n")
         # Loop through the instances and configure each one
         for name, details in instances.items():
             
