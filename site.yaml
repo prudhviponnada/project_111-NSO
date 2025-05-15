@@ -13,9 +13,9 @@
     - name: Install all required APT packages
       apt:
         name:
-          - nginx
           - python3-pip
           - snmpd
+          - prometheus-node-exporter
         state: latest
 
     - name: Install all required Python packages via pip
@@ -47,8 +47,9 @@
       service:
         name: snmpd
         state: restarted
-  
-- hosts: dev
+    
+    
+- hosts: all
   gather_facts: true
     
 - hosts: HAproxy
@@ -68,6 +69,7 @@
           - snmp 
           - snmp-mibs-downloader
           - keepalived
+          - prometheus-node-exporter
         state: present
    
     - name: Template keepalived config
@@ -101,4 +103,28 @@
         state: restarted
 
 
+- hosts: bastion
+  become: true
+  tasks:
+    - name: Update APT cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 7200
+
+    - name: Install all required APT packages
+      apt:
+        name:
+          - prometheus
+          - prometheus-node-exporter
+        state: latest
+
+    - name: copy prometheus.yml file
+      template: 
+        src: ./templates/prometheus.yaml
+        dest: /etc/prometheus/prometheus.yml
+
+    - name: Restart Prometheus
+      service:
+        name: prometheus
+        state: restarted
 

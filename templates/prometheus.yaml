@@ -1,0 +1,26 @@
+
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'bastion_node'
+    static_configs:
+      - targets:
+        {% for host in groups['bastion'] %}
+          - '{{ hostvars[host]["ansible_default_ipv4"]["address"] }}:9100'
+        {% endfor %}
+
+  - job_name: 'front_endhaproxy'
+    static_configs:
+      - targets:
+        {% for host in groups['HAproxy'] %}
+          - '{{ hostvars[host]["ansible_default_ipv4"]["address"] }}:9100'
+        {% endfor %}
+
+  - job_name: 'backend_servers'
+    static_configs:
+      - targets:
+        {% for host in groups['dev'] %}
+          - '{{ hostvars[host]["ansible_default_ipv4"]["address"] }}:9100'
+        {% endfor %}
+
