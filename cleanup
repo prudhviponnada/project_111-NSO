@@ -4,7 +4,7 @@ import openstack
 import sys
 import os
 import time
-from openrc import load_openrc
+from python_files.openrc import load_openrc
 
 def delete_instance(conn, name):
     instances = list(conn.compute.servers(name=name))

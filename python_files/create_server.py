@@ -1,6 +1,6 @@
 import logging
-from network_files import get_external_network
-from network_files import get_unused_floating_ip
+from python_files.network_files import get_external_network, get_unused_floating_ip
+
 
 def server_exists(conn, server_name):
     """

@@ -28,7 +28,7 @@
 
     - name: Copy Flask application
       copy:
-        src: service.py
+        src: python_files/service.py
         dest: /home/ubuntu/app.py
         owner: ubuntu
         mode: '0644'
