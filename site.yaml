@@ -32,13 +32,17 @@
         dest: /home/ubuntu/app.py
         owner: ubuntu
         mode: '0644'
+        
+    - name: copy snmpd.conf file
+      copy: 
+        src: ./templates/snmpd.conf 
+        dest: /etc/snmp/snmpd.conf
 
     - name: Deploy Flask application with Gunicorn
       shell: gunicorn -w 2 -D -b 0.0.0.0:5000 app:app
       args:
         chdir: /home/ubuntu
 
-  handlers:
     - name: restart snmpd
       service:
         name: snmpd
@@ -70,11 +74,16 @@
       template:
         src: ./templates/keepalived.conf.j2
         dest: /etc/keepalived/keepalived.conf
-        
-    - name: template haproxy 
+
+    - name: copy template haproxy 
       template: 
         src: ./templates/haproxy.conf
-        desst: /etc/haproxy/haproxy.conf
+        dest: /etc/haproxy/haproxy.cfg
+
+    - name: copy template nginx 
+      template: 
+        src: ./templates/nginx.conf
+        dest: /etc/nginx/nginx.conf
 
     - name: Restart haproxy
       service:
