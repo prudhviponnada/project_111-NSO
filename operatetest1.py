@@ -4,6 +4,10 @@ import subprocess
 import re
 import time
 import datetime
+import json
+import logging
+from python_files.create_ssh_config import create_ssh_config_file, write_hosts
+from python_files.ansible_playbook import run_playbook, ansible_ping
 
 def get_current_time():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -12,11 +16,6 @@ def check_server_status(server_name):
     result = subprocess.run(f"openstack server show {server_name}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return "ACTIVE" in result.stdout
 
-def execute_ansible_tasks():
-    ansible_command = "ansible-playbook -i hosts site.yaml"
-    subprocess.run(ansible_command, shell=True)
-    print("Executing Ansible tasks...")
-
 def validate_keypair(key_name):
     result = subprocess.run("openstack keypair list -f value -c Name", shell=True, stdout=subprocess.PIPE, text=True)
     keypairs = result.stdout.splitlines()
@@ -24,12 +23,30 @@ def validate_keypair(key_name):
 
 def get_fixed_ip(server_name):
     try:
-        command = f"openstack server show {server_name} -c addresses"
-        output = subprocess.check_output(command, shell=True).decode().strip().split('\n')
-        return output[3].split('=')[1].strip().rstrip('|')
-    except subprocess.CalledProcessError as e:
+        command = f"openstack server show {server_name} -c addresses -f json"
+        output = subprocess.check_output(command, shell=True).decode()
+        addresses = json.loads(output)["addresses"]
+        # Extract internal IP (first part before comma, if present)
+        internal_ip = addresses.split(",")[0].split("=")[1].strip() if "=" in addresses else addresses
+        return internal_ip
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, IndexError) as e:
         print(f"{get_current_time()}: Failed to get IP for {server_name}. Error: {str(e)}")
         return None
+
+def get_keepalived_ip():
+    try:
+        command = f"openstack port show my-keepalived-port -c fixed_ips -f json"
+        output = subprocess.check_output(command, shell=True).decode()
+        port_data = json.loads(output)
+        fixed_ips = port_data.get("fixed_ips", [])
+        if fixed_ips:
+            return fixed_ips[0]["ip_address"]
+        else:
+            print(f"{get_current_time()}: No fixed IP found for my-keepalived-port.")
+            sys.exit(1)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, IndexError) as e:
+        print(f"{get_current_time()}: Failed to get keepalived port IP. Error: {str(e)}")
+        sys.exit(1)
 
 # Parse command-line arguments
 openrc_file = sys.argv[1]
@@ -82,9 +99,7 @@ while True:
     time.sleep(30)
 
     if len(existing_dev) == num_devs:
-        config_lines = [line.replace(f"num_devs = {num_devs}", f"num_devs = {num_devs + 1}") for line in config_lines]
-        with open('server.conf', 'w') as file:
-            file.writelines(config_lines)
+        # Remove auto-increment for production; keep for testing if needed
         time.sleep(30)
     elif len(existing_dev) > num_devs:
         excess_dev = len(existing_dev) - num_devs
@@ -158,20 +173,73 @@ while True:
         bastion_ip = get_fixed_ip(bastion_name)
         dev_ips = {name: get_fixed_ip(name) for name in server_names if name in existing_dev}
 
+        # Load existing instances.json if it exists
+        instances_file_path = os.path.join(os.getcwd(), "instances.json")
+        instance_details = {}
+        if os.path.exists(instances_file_path):
+            with open(instances_file_path, 'r') as instances_file:
+                instance_details = json.load(instances_file)
+
+        # Update instance_details with internal IPs
+        instance_details.update({
+            bastion_name: {"internal_ip": bastion_ip, "floating_ip": instance_details.get(bastion_name, {}).get("floating_ip")},
+            proxy1_name: {"internal_ip": haproxy1_ip, "floating_ip": None},
+            proxy2_name: {"internal_ip": haproxy2_ip, "floating_ip": None},
+        })
+        for dev_name, dev_ip in dev_ips.items():
+            if dev_ip:
+                instance_details[dev_name] = {"internal_ip": dev_ip, "floating_ip": None}
+
+        # If bastion's floating_ip is still None, query OpenStack
+        if instance_details.get(bastion_name, {}).get("floating_ip") is None:
+            try:
+                command = f"openstack server show {bastion_name} -c addresses -f json"
+                output = subprocess.check_output(command, shell=True).decode()
+                addresses = json.loads(output)["addresses"]
+                if "," in addresses:
+                    floating_ip = addresses.split(",")[1].strip()
+                    instance_details[bastion_name]["floating_ip"] = floating_ip
+                else:
+                    print(f"{get_current_time()}: No floating IP found for {bastion_name}.")
+                    sys.exit(1)
+            except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, IndexError) as e:
+                print(f"{get_current_time()}: Failed to get floating IP for {bastion_name}. Error: {str(e)}")
+                sys.exit(1)
+
+        # Filter out instances with None IPs
+        instance_details = {name: details for name, details in instance_details.items() if details["internal_ip"]}
+
+        # Write updated instance_details to instances.json
+        with open(instances_file_path, 'w') as instances_file:
+            json.dump(instance_details, instances_file, indent=4)
+        print(f"{get_current_time()}: Instances details written to {instances_file_path}")
+
+        # Write HAProxy configuration
         with open('haproxy.cfg', 'w') as file:
             file.write(f"server haproxy1 {haproxy1_ip}:6443 check\n")
             file.write(f"server haproxy2 {haproxy2_ip}:6443 check\n")
 
-        with open('hosts', 'w') as file:
-            file.write(f"[bastion]\n")
-            file.write(f"{bastion_name} ansible_host={bastion_ip} ansible_ssh_user=ubuntu ansible_ssh_private_key_file={ssh_key}\n")
-            file.write(f"[main_proxy]\n")
-            file.write(f"{proxy1_name} ansible_host={haproxy1_ip} ansible_ssh_user=ubuntu ansible_ssh_private_key_file={ssh_key}\n")
-            file.write(f"[backup_proxy]\n")
-            file.write(f"{proxy2_name} ansible_host={haproxy2_ip} ansible_ssh_user=ubuntu ansible_ssh_private_key_file={ssh_key}\n")
-            file.write(f"[dev]\n")
-            for dev_name, dev_ip in dev_ips.items():
-                if dev_ip:  # Ensure the IP was successfully retrieved
-                    file.write(f"{dev_name} ansible_host={dev_ip} ansible_ssh_user=ubuntu ansible_ssh_private_key_file={ssh_key}\n")
+        # Create Ansible hosts file using write_hosts
+        instances = {
+            name: {
+                "internal_ip": details["internal_ip"],
+                "floating_ip": details["floating_ip"],
+                "name": name
+            } for name, details in instance_details.items()
+        }
+        print(f"{get_current_time()}: Creating Ansible hosts file.")
+        write_hosts(tag, instances)
 
-        execute_ansible_tasks()
+        # Create SSH configuration file
+        private_key_path = ssh_key.rsplit('.pub', 1)[0] if ssh_key.endswith('.pub') else ssh_key
+        print(f"{get_current_time()}: Creating SSH configuration file.")
+        create_ssh_config_file(tag, instances_file_path, private_key_path)
+
+        logging.info("ping all hosts")
+        if not ansible_ping(tag):
+            sys.exit(1)
+
+        # Execute Ansible playbook with keepalived virtual IP
+        virtual_ip = get_keepalived_ip()
+        logging.info("Executing Ansible playbook.")
+        run_playbook(tag, virtual_ip=virtual_ip)
