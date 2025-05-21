@@ -26,7 +26,6 @@ def get_fixed_ip(server_name):
         command = f"openstack server show {server_name} -c addresses -f json"
         output = subprocess.check_output(command, shell=True).decode()
         addresses = json.loads(output)["addresses"]
-        # Extract internal IP (first part before comma, if present)
         internal_ip = addresses.split(",")[0].split("=")[1].strip() if "=" in addresses else addresses
         return internal_ip
     except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, IndexError) as e:
@@ -95,11 +94,11 @@ while True:
 
     result = subprocess.run("openstack server list -c Name -f value", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     existing_dev = re.findall(rf"^{tag}_dev\d+", result.stdout, re.MULTILINE)
+    all_servers = result.stdout.splitlines()  # Get all servers for bastion and proxies
     print(f"{get_current_time()}: Found {len(existing_dev)} existing dev. Sleeping for 30 seconds...")
     time.sleep(30)
 
     if len(existing_dev) == num_devs:
-        # Remove auto-increment for production; keep for testing if needed
         time.sleep(30)
     elif len(existing_dev) > num_devs:
         excess_dev = len(existing_dev) - num_devs
@@ -180,7 +179,12 @@ while True:
             with open(instances_file_path, 'r') as instances_file:
                 instance_details = json.load(instances_file)
 
-        # Update instance_details with internal IPs
+        # Update instance_details with only active servers
+        instance_details = {
+            name: details for name, details in instance_details.items()
+            if name in all_servers or name in [bastion_name, proxy1_name, proxy2_name] + existing_dev
+        }
+
         instance_details.update({
             bastion_name: {"internal_ip": bastion_ip, "floating_ip": instance_details.get(bastion_name, {}).get("floating_ip")},
             proxy1_name: {"internal_ip": haproxy1_ip, "floating_ip": None},
@@ -214,10 +218,20 @@ while True:
             json.dump(instance_details, instances_file, indent=4)
         print(f"{get_current_time()}: Instances details written to {instances_file_path}")
 
-        # Write HAProxy configuration
+        # Write HAProxy configuration with correct ports
         with open('haproxy.cfg', 'w') as file:
-            file.write(f"server haproxy1 {haproxy1_ip}:6443 check\n")
-            file.write(f"server haproxy2 {haproxy2_ip}:6443 check\n")
+            file.write("frontend service_front\n")
+            file.write("    bind *:5000\n")
+            file.write("    default_backend service_back\n")
+            file.write("frontend snmp_front\n")
+            file.write("    bind *:6000 proto udp\n")
+            file.write("    default_backend snmp_back\n")
+            file.write("backend service_back\n")
+            file.write(f"    server haproxy1 {haproxy1_ip}:5000 check\n")
+            file.write(f"    server haproxy2 {haproxy2_ip}:5000 check\n")
+            file.write("backend snmp_back\n")
+            file.write(f"    server haproxy1 {haproxy1_ip}:6000 check proto udp\n")
+            file.write(f"    server haproxy2 {haproxy2_ip}:6000 check proto udp\n")
 
         # Create Ansible hosts file using write_hosts
         instances = {
