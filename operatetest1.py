@@ -102,7 +102,7 @@ while True:
         time.sleep(30)
     elif len(existing_dev) > num_devs:
         excess_dev = len(existing_dev) - num_devs
-        print(f"{get_current_time()}: There are {excess_dev} excess dev.")
+        print(f"{get_current_time()}: There are/is {excess_dev} excess dev.")
 
         existing_dev.sort(reverse=True)
         removed_count = 0
