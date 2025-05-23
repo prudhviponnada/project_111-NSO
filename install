@@ -8,7 +8,8 @@ import json
 
 from python_files.create_ssh_config import create_ssh_config_file , write_hosts
 from python_files.create_server import create_instance_if_not_exists
-from python_files.network_files import get_external_network, get_unused_floating_ip
+from python_files.network_files import get_external_network, get_unused_floating_ip, create_network
+from python_files.create_securityGroup import create_security_group
 from python_files.openrc import load_openrc
 from python_files.ansible_playbook import run_playbook, ansible_ping
 
@@ -27,34 +28,7 @@ def create_keypair(conn, keypair_name, public_key_path):
     else:
         logging.info(f"Key pair '{keypair_name}' already exists.")
 
-def create_network(conn, tag):
-    network = conn.network.find_network(tag + "_network")
-    if network: 
-        subnet = conn.network.find_subnet(tag+"_subnet")
-    if not network:
-        network = conn.network.create_network(name=tag + "_network")
-        subnet = conn.network.create_subnet(
-            name=tag + "_subnet",
-            network_id=network.id,
-            ip_version='4',
-            cidr='10.0.0.0/24'
-        )
-        router = get_or_create_router(conn, tag)
-        conn.network.add_interface_to_router(router, subnet_id=subnet.id)
-        logging.info(f"Created network, subnet, and router: {network.name}, {subnet.name}, {router.name}")
-    else:
-        logging.info(f"Network {network.name} already exists")
-    return network, subnet
 
-def get_or_create_router(conn, tag):
-    router = conn.network.find_router(tag + "_router")
-    if not router:
-        external_network_id = get_external_network(conn)
-        router = conn.network.create_router(name=tag + "_router", external_gateway_info={"network_id": external_network_id})
-        logging.info(f"Created router: {router.name}")
-    else:
-        logging.info(f"Router {router.name} already exists")
-    return router
 def create_port_keepalived(conn, network, subnet, sec_group):
     # Create a port and attach a floating ip to it 
     keepalived_port = None
@@ -86,81 +60,10 @@ def create_port_keepalived(conn, network, subnet, sec_group):
     except openstack.exceptions.ConflictException: 
         pass
     conn.network.update_port(keepalived_port.id, allowed_address_pairs=[{"ip_address": keepalived_floating_ip.floating_ip_address}])
-    
-    print("ip address of the port is ", keepalived_floating_ip.floating_ip_address)
-    text_file = open('addr_vip.txt','w')
-#initialize an empty list
-    word_list= keepalived_floating_ip.floating_ip_address
-    text_file.writelines(word_list) 
-    text_file.close() 
-    
         
     return keepalived_port, keepalived_floating_ip
     
-def create_security_group(conn, tag, subnet):
-    sec_group = conn.network.find_security_group(tag + "_secgroup")
-    if not sec_group:
-        sec_group = conn.network.create_security_group(name=tag + "_secgroup")
-        conn.network.create_security_group_rule(
-            security_group_id=sec_group.id,
-            direction='ingress',
-            protocol='icmp'
-        )
-        conn.network.create_security_group_rule(
-            security_group_id=sec_group.id,
-            direction='ingress',
-            protocol='tcp',
-            port_range_min='22',
-            port_range_max='22'
-        )
-        conn.network.create_security_group_rule(
-            security_group_id=sec_group.id,
-            direction='ingress',
-            protocol='tcp',
-            port_range_min='5000',
-            port_range_max='5000'
-        )
-        conn.network.create_security_group_rule(
-            security_group_id=sec_group.id,
-            direction='ingress',
-            protocol='udp',
-            port_range_min='6000',
-            port_range_max='6000'
-        )
-        conn.network.create_security_group_rule(
-            security_group_id=sec_group.id,
-            direction='ingress',
-            protocol='udp',
-            port_range_min='161',
-            port_range_max='161',
-            remote_ip_prefix = subnet.cidr
-        )
-        conn.network.create_security_group_rule(
-            security_group_id=sec_group.id,
-            direction='ingress',
-            protocol='tcp',
-            port_range_min='5000',
-            port_range_max='5000',
-            remote_ip_prefix = subnet.cidr
-        )
-        conn.network.create_security_group_rule(
-            security_group_id=sec_group.id,
-            direction='ingress',
-            protocol='tcp',
-            port_range_min='22',
-            port_range_max='22',
-            remote_ip_prefix = subnet.cidr
-        )
-        conn.network.create_security_group_rule(
-            security_group_id=sec_group.id,
-            direction='ingress',
-            protocol='VRRP',
-            remote_ip_prefix = subnet.cidr
-        )
-        logging.info(f"Created security group {sec_group.name}")
-    else:
-        logging.info(f"Security group {sec_group.name} already exists")
-    return sec_group
+
 
 def delete_unused_resources(conn, tag):
     delete_unused_routers(conn, tag)
@@ -263,4 +166,3 @@ if __name__ == "__main__":
         sys.exit(1)
 
     main(sys.argv[1], sys.argv[2], sys.argv[3])
-    
