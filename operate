@@ -27,8 +27,15 @@ def get_fixed_ip(server_name):
         command = f"openstack server show {server_name} -c addresses -f json"
         output = subprocess.check_output(command, shell=True).decode()
         addresses = json.loads(output)["addresses"]
-        internal_ip = addresses.split(",")[0].split("=")[1].strip() if "=" in addresses else addresses
-        return internal_ip
+        if isinstance(addresses, dict):
+            for network, ip_list in addresses.items():
+                if ip_list and isinstance(ip_list, list):
+                    return ip_list[0]  # Take the first IP
+        # Handle flat format like "G5_network=10.0.0.24"
+        elif "=" in addresses:
+            return addresses.split(",")[0].split("=")[1].strip()
+        else:
+            return addresses.strip()
     except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, IndexError) as e:
         print(f"{get_current_time()}: Failed to get IP for {server_name}. Error: {str(e)}")
         return None
@@ -97,7 +104,7 @@ while True:
     existing_dev = re.findall(rf"^{tag}_dev\d+", result.stdout, re.MULTILINE)
     all_servers = result.stdout.splitlines()  # Get all servers for bastion and proxies
     print(f"{get_current_time()}: Found {len(existing_dev)} existing dev. Sleeping for 30 seconds...")
-    time.sleep(30)
+    # time.sleep(30)
 
     if len(existing_dev) == num_devs:
         time.sleep(30)
