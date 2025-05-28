@@ -134,21 +134,36 @@ def main(openrc_file, tag, ssh_key):
         logging.info(f": Server configuration requires {num_dev} dev nodes.")
 
         logging.info(f": Creating or checking instances with tag {tag}.")
-        instances = {
-            f"{tag}_bastion": create_instance_if_not_exists(conn, f"{tag}_bastion", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=True),
-            f"{tag}_proxy1": create_instance_if_not_exists(conn, f"{tag}_proxy1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False, allowed_address=virtual_ip),
-            f"{tag}_proxy2": create_instance_if_not_exists(conn, f"{tag}_proxy2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False, allowed_address=virtual_ip)
-        }
+        # Get existing servers before creation
+        result = subprocess.run("openstack server list -c Name -f value", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        initial_servers = set(result.stdout.splitlines())
+        
+        instances = {}
+        # Create or check bastion and proxy servers
+        for name in [f"{tag}_bastion", f"{tag}_proxy1", f"{tag}_proxy2"]:
+            instances[name] = create_instance_if_not_exists(conn, name, tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, 
+                                                           floating_ip_pool=(name == f"{tag}_bastion"), 
+                                                           allowed_address=virtual_ip if "proxy" in name else None)
+        # Create or check dev nodes
         for i in range(1, num_dev + 1):
-            instances[f"{tag}_dev{i}"] = create_instance_if_not_exists(conn, f"{tag}_dev{i}", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False)
+            name = f"{tag}_dev{i}"
+            instances[name] = create_instance_if_not_exists(conn, name, tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False)
+        
+        # Get servers after creation
+        result = subprocess.run("openstack server list -c Name -f value", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        final_servers = set(result.stdout.splitlines())
+        
+        # Check if any new servers were created
+        new_servers = final_servers - initial_servers
+        server_created = bool(new_servers)
+        if server_created:
+            logging.info(f": New servers created: {', '.join(new_servers)}")
 
         # Filter out instances that were not created or checked
         instances = {name: inst for name, inst in instances.items() if inst is not None}
 
         # Handle excess dev nodes
-        result = subprocess.run("openstack server list -c Name -f value", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        all_servers = result.stdout.splitlines()
-        existing_dev = [name for name in all_servers if re.match(rf"^{tag}_dev\d+", name)]
+        existing_dev = [name for name in final_servers if re.match(rf"^{tag}_dev\d+", name)]
         if len(existing_dev) > num_dev:
             excess_dev = len(existing_dev) - num_dev
             logging.info(f": There are {excess_dev} excess dev nodes.")
@@ -212,21 +227,23 @@ def main(openrc_file, tag, ssh_key):
         else:
             logging.info(f": Missing HAProxy IPs (proxy1: {haproxy1_ip}, proxy2: {haproxy2_ip}). Continuing.")
 
-        # Run Ansible operations
-        logging.info(f": Pinging all hosts.")
-        if not ansible_ping(tag):
-            logging.info(f": Ansible ping failed. Continuing.")
+        # Run Ansible only if a server was created
+        if server_created:
+            logging.info(f": Pinging all hosts since a new server was created.")
+            if not ansible_ping(tag):
+                logging.info(f": Ansible ping failed. Continuing.")
+            else:
+                logging.info(f": All hosts are reachable.")
+            logging.info(f": Executing Ansible playbook since a new server was created.")
+            run_playbook(tag, virtual_ip=virtual_ip)
         else:
-            logging.info(f": All hosts are reachable.")
-
-        logging.info(f": Executing Ansible playbook.")
-        run_playbook(tag, virtual_ip=virtual_ip)
+            logging.info(f": No new servers created. Skipping Ansible playbook.")
 
         logging.info(f": Sleeping for 30 seconds...")
         time.sleep(30)
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
-        print("Usage: python operate.py <openrc> <tag> <ssh_key>")
+        print("Usage: python operate2.py <openrc> <tag> <ssh_key>")
         sys.exit(1)
     main(sys.argv[1], sys.argv[2], sys.argv[3])
