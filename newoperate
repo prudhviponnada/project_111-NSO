@@ -1,0 +1,232 @@
+#!/usr/bin/python3
+import os
+import sys
+import subprocess
+import re
+import time
+import datetime
+import json
+import logging
+import openstack
+from python_files.create_server import create_instance_if_not_exists, server_exists
+from python_files.network_files import get_external_network, get_unused_floating_ip, create_network, get_or_create_router
+from python_files.create_securityGroup import create_security_group
+from python_files.create_ssh_config import create_ssh_config_file, write_hosts
+from python_files.ansible_playbook import run_playbook, ansible_ping
+from python_files.openrc import load_openrc
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+
+def get_current_time():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def delete_unused_floating_ips(conn, tag):
+    try:
+        floating_ips = conn.network.ips()
+        for ip in floating_ips:
+            if ip.description and ip.description.startswith(tag + "_") and ip.fixed_ip_address is None:
+                conn.network.delete_ip(ip.id)
+                logging.info(f": Deleted unused floating IP: {ip.floating_ip_address}")
+    except Exception as e:
+        logging.info(f": Failed to delete unused floating IPs. Error: {str(e)}")
+
+def check_server_status(server_name):
+    result = subprocess.run(f"openstack server show {server_name}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return "ACTIVE" in result.stdout
+
+def create_bastion_port_and_floating_ip(conn, network, subnet, sec_group, tag, name):
+    try:
+        port = conn.network.find_port(f"{name}-port")
+        if not port:
+            logging.info(f": Creating port for {name}...")
+            port = conn.network.create_port(
+                name=f"{name}-port",
+                network_id=network.id,
+                fixed_ips=[{'subnet_id': subnet.id}],
+                security_groups=[sec_group.id]
+            )
+        external_network_id = get_external_network(conn)
+        floating_ip = get_unused_floating_ip(conn, external_network_id)
+        if not floating_ip:
+            logging.info(f": No available floating IPs for {name}.")
+            return port, None
+        try:
+            conn.network.update_ip(floating_ip, port_id=port.id)
+            logging.info(f": Assigned floating IP {floating_ip.floating_ip_address} to {name} port.")
+        except openstack.exceptions.ConflictException:
+            logging.info(f": Floating IP already assigned to {name} port.")
+        return port, floating_ip
+    except Exception as e:
+        logging.info(f": Failed to create port or assign floating IP for {name}. Error: {str(e)}")
+        return None, None
+
+def create_keepalived_port_and_floating_ip(conn, network, subnet, sec_group):
+    try:
+        port = conn.network.find_port('my-keepalived-port')
+        if not port:
+            logging.info(f": Creating keepalived port...")
+            port = conn.network.create_port(
+                name='my-keepalived-port',
+                network_id=network.id,
+                fixed_ips=[{'subnet_id': subnet.id}],
+                security_groups=[sec_group.id]
+            )
+        external_network_id = get_external_network(conn)
+        floating_ip = get_unused_floating_ip(conn, external_network_id)
+        if not floating_ip:
+            logging.info(f": No available floating IPs for keepalived port.")
+            sys.exit(1)
+        try:
+            conn.network.update_ip(floating_ip, port_id=port.id)
+            conn.network.update_port(port.id, allowed_address_pairs=[{"ip_address": floating_ip.floating_ip_address}])
+            logging.info(f": Assigned floating IP {floating_ip.floating_ip_address} to keepalived port.")
+        except openstack.exceptions.ConflictException:
+            logging.info(f": Floating IP already assigned to keepalived port.")
+        return port, floating_ip
+    except Exception as e:
+        logging.info(f": Failed to create keepalived port or assign floating IP. Error: {str(e)}")
+        sys.exit(1)
+
+def main(openrc_file, tag, ssh_key):
+    if not os.path.isfile(openrc_file):
+        logging.info(f": Error: The file '{openrc_file}' does not exist.")
+        sys.exit(1)
+    if not os.path.isfile(ssh_key):
+        logging.info(f": Error: The file '{ssh_key}' does not exist.")
+        sys.exit(1)
+
+    load_openrc(openrc_file)
+    conn = openstack.connect()
+
+    logging.info(f": Checking if we have floating IPs available.")
+    delete_unused_floating_ips(conn, tag)
+
+    logging.info(f": Creating network if...")
+    network, subnet = create_network(conn, tag)
+
+    logging.info(f": Creating security group")
+    sec_group = create_security_group(conn, tag, subnet)
+
+    logging.info(f": Creating bastion port and floating IP.")
+    bastion_port, bastion_floating_ip = create_bastion_port_and_floating_ip(conn, network, subnet, sec_group, tag, f"{tag}_bastion")
+    if not bastion_port:
+        logging.info(f": Failed to create bastion port. Exiting.")
+        sys.exit(1)
+
+    logging.info(f": Creating keepalived port and floating IP.")
+    keepalived_port, keepalived_floating_ip = create_keepalived_port_and_floating_ip(conn, network, subnet, sec_group)
+    virtual_ip = keepalived_port.fixed_ips[0]['ip_address']
+
+    while True:
+        with open('server.conf', 'r') as file:
+            config_lines = file.readlines()
+        num_dev = None
+        for line in config_lines:
+            if "num_dev =" in line:
+                match = re.search(r'num_dev = (\d+)', line)
+                if match:
+                    num_dev = int(match.group(1))
+                break
+        if num_dev is None:
+            logging.info(f": Could not determine the number of required dev from server.conf.")
+            sys.exit(1)
+        logging.info(f": Server configuration requires {num_dev} dev nodes.")
+
+        logging.info(f": Creating or checking instances with tag {tag}.")
+        instances = {
+            f"{tag}_bastion": create_instance_if_not_exists(conn, f"{tag}_bastion", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=True),
+            f"{tag}_proxy1": create_instance_if_not_exists(conn, f"{tag}_proxy1", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False, allowed_address=virtual_ip),
+            f"{tag}_proxy2": create_instance_if_not_exists(conn, f"{tag}_proxy2", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False, allowed_address=virtual_ip)
+        }
+        for i in range(1, num_dev + 1):
+            instances[f"{tag}_dev{i}"] = create_instance_if_not_exists(conn, f"{tag}_dev{i}", tag, "Ubuntu 20.04 Focal Fossa x86_64", "1C-4GB-100GB", network.id, sec_group, tag, floating_ip_pool=False)
+
+        # Filter out instances that were not created or checked
+        instances = {name: inst for name, inst in instances.items() if inst is not None}
+
+        # Handle excess dev nodes
+        result = subprocess.run("openstack server list -c Name -f value", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        all_servers = result.stdout.splitlines()
+        existing_dev = [name for name in all_servers if re.match(rf"^{tag}_dev\d+", name)]
+        if len(existing_dev) > num_dev:
+            excess_dev = len(existing_dev) - num_dev
+            logging.info(f": There are {excess_dev} excess dev nodes.")
+            existing_dev.sort(reverse=True)
+            for dev in existing_dev[:excess_dev]:
+                if server_exists(conn, dev):
+                    result = subprocess.run(f"openstack server delete {dev}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    time.sleep(20)
+                    if result.returncode == 0:
+                        logging.info(f": Successfully deleted {dev}.")
+                    else:
+                        logging.info(f": Failed to delete {dev}. Error: {result.stderr}")
+
+        # Check and start non-running servers
+        all_servers = subprocess.run("openstack server list -c Name -f value", shell=True, stdout=subprocess.PIPE).stdout.splitlines()
+        server_names = [f"{tag}_bastion", f"{tag}_proxy1", f"{tag}_proxy2"] + [f"{tag}_dev{i}" for i in range(1, num_dev + 1)]
+        existing_servers = {name: check_server_status(name) for name in server_names if name in all_servers}
+        non_running = [name for name, status in existing_servers.items() if not status]
+        if non_running:
+            logging.info(f": The following servers are not running: {', '.join(non_running)}.")
+            for server in non_running:
+                logging.info(f": Attempting to start {server}...")
+                result = subprocess.run(f"openstack server start {server}", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                if result.returncode == 0:
+                    logging.info(f": Successfully started {server}.")
+                else:
+                    logging.info(f": Failed to start {server}. Error: {result.stderr}")
+            time.sleep(30)
+
+        # Update instance details and configurations
+        instance_details = {name: inst for name, inst in instances.items() if inst}
+        instances_file_path = os.path.join(os.getcwd(), "instances.json")
+        with open(instances_file_path, 'w') as instances_file:
+            json.dump(instance_details, instances_file, indent=4)
+        logging.info(f": Instances details written to {instances_file_path}")
+
+        logging.info(f": Creating Ansible hosts file.")
+        write_hosts(tag, instances)
+        logging.info(f": Creating SSH configuration.")
+        private_key_path = ssh_key.rsplit('.pub', 1)[0] if ssh_key.endswith('.pub') else ssh_key
+        create_ssh_config_file(tag, instances_file_path, private_key_path)
+
+        # Update HAProxy configuration
+        haproxy1_ip = instance_details.get(f"{tag}_proxy1", {}).get("internal_ip")
+        haproxy2_ip = instance_details.get(f"{tag}_proxy2", {}).get("internal_ip")
+        if haproxy1_ip and haproxy2_ip:
+            with open('haproxy.cfg', 'w') as file:
+                file.write("frontend service_front\n")
+                file.write("    bind *:5000\n")
+                file.write("    default_backend service_back\n")
+                file.write("frontend snmp_front\n")
+                file.write("    bind *:6000 proto udp\n")
+                file.write("    default_backend snmp_back\n")
+                file.write("backend service_back\n")
+                file.write(f"    server haproxy1 {haproxy1_ip}:5000 check\n")
+                file.write(f"    server haproxy2 {haproxy2_ip}:5000 check\n")
+                file.write("backend snmp_back\n")
+                file.write(f"    server haproxy1 {haproxy1_ip}:6000 check proto udp\n")
+                file.write(f"    server haproxy2 {haproxy2_ip}:6000 check proto udp\n")
+            logging.info(f": HAProxy configuration updated.")
+        else:
+            logging.info(f": Missing HAProxy IPs (proxy1: {haproxy1_ip}, proxy2: {haproxy2_ip}). Continuing.")
+
+        # Run Ansible operations
+        logging.info(f": Pinging all hosts.")
+        if not ansible_ping(tag):
+            logging.info(f": Ansible ping failed. Continuing.")
+        else:
+            logging.info(f": All hosts are reachable.")
+
+        logging.info(f": Executing Ansible playbook.")
+        run_playbook(tag, virtual_ip=virtual_ip)
+
+        logging.info(f": Sleeping for 30 seconds...")
+        time.sleep(30)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        print("Usage: python operate.py <openrc> <tag> <ssh_key>")
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2], sys.argv[3])
